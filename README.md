@@ -109,6 +109,35 @@ killall SystemUIServer; killall ControlCenter   # both relaunch automatically
 Then relaunch with `./menubar.sh`. If it still doesn't show, logging out and
 back in (or a reboot) clears it for good.
 
+## System-tray toggle (Windows / WSL2)
+
+Running Claude Code under WSL2? WSLg renders Linux GUI apps as individual
+windows with no Linux notification area, so there's no Linux menu bar to dock
+into — the equivalent lives in the **Windows system tray**. Build it from
+inside WSL:
+
+```bash
+./traybar.sh           # installs to %LOCALAPPDATA% and launches the tray app
+./traybar.sh --login   # ...and start it at Windows login (a .vbs in Startup)
+./traybar.sh --stop     # quit it
+./traybar.sh --logout   # remove the Startup entry
+```
+
+A ☢ radiation icon appears by the clock (you may need the `^` to reveal hidden
+icons). **Left-click** toggles mute; **right-click** opens a menu. It's the
+exact same live mechanism as macOS: clicking writes `1`/`0` to
+`~/.config/claude-geiger/enabled` — over the `\\wsl.localhost\<distro>\…`
+share — and `geiger.sh` re-reads it every poll, so muting is instant with no
+restart. The icon is gold when clicking, dim grey when muted.
+
+It's a small PowerShell app (`geigerbar.ps1`, using the built-in WinForms
+`NotifyIcon` — nothing to install) that `traybar.sh` copies to
+`%LOCALAPPDATA%\claude-geiger` and launches hidden via a `.vbs` (running a
+`.ps1` straight off the WSL share trips Windows' network-zone guard; an
+NTFS-local copy doesn't, and the `.vbs` avoids a console-window flash). To
+avoid booting the WSL VM at login just to read the toggle, it only reads the
+file when WSL is already running, defaulting to *on* otherwise.
+
 ## Tuning (environment variables)
 
 | Variable | Default | Meaning |
@@ -120,7 +149,7 @@ back in (or a reboot) clears it for good.
 | `GEIGER_COUNT` | `total` | `total` (input+output) or `output` only |
 | `GEIGER_SOUND` | `./click.wav` | Any file your player can play |
 | `GEIGER_VOLUME` | `1.0` | Playback loudness; `0.15` = 15%, for quiet background ticks |
-| `GEIGER_PLAYER` | auto | Player command; auto-detected if unset |
+| `GEIGER_PLAYER` | auto | Player command; auto-detected if unset. On WSL2, audio defaults to the Windows stack (`GEIGER_VOLUME` honored) — set `windows` to force it, or a Linux player name (e.g. `paplay`) to bypass it |
 | `GEIGER_STATE_DIR` | `$TMPDIR/claude-geiger` | Per-session last-count storage |
 | `GEIGER_CONFIG_DIR` | `~/.config/claude-geiger` | Where the live config files live |
 
@@ -146,6 +175,12 @@ Claude Code; the config files are the reliable way to persist them.)
   (macOS) or `paplay`/`aplay`/`ffplay`/`play` (Linux); install one (e.g.
   `pulseaudio-utils` for `paplay`, `alsa-utils` for `aplay`) or set
   `GEIGER_PLAYER` if yours isn't found. With no player it stays silent.
+- **WSL2:** clicks play through the Windows audio stack (`powershell.exe` +
+  WPF `MediaPlayer`), since the Linux→WSLg→RDP audio bridge often reports
+  success while staying silent on the host. No extra setup; just make sure
+  Windows has a working default output device. `GEIGER_VOLUME` is honored here
+  (it maps to `MediaPlayer.Volume`, the same 0–1 scale as macOS). To force the
+  Linux route instead, set `GEIGER_PLAYER=paplay`.
 
 ## Files
 
@@ -156,3 +191,5 @@ Claude Code; the config files are the reliable way to persist them.)
 - `uninstall.sh` — removes the statusLine config again
 - `geigerbar.swift` — macOS menu bar toggle (☢ icon, mute/unmute live)
 - `menubar.sh` — build/launch/stop the menu bar app, optional login item
+- `geigerbar.ps1` — Windows/WSL2 system-tray toggle (☢ icon, mute/unmute live)
+- `traybar.sh` — install/launch/stop the tray app from WSL, optional Startup entry
