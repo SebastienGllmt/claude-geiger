@@ -20,11 +20,32 @@
 #   GEIGER_STATE_DIR         where last-counts are stored
 #                            (default $TMPDIR/claude-geiger)
 #   GEIGER_PLAYER            audio player command; auto-detected if unset
-#                            (afplay/paplay/aplay/ffplay/play)
+#                            (afplay/paplay/ffplay/play; aplay has no volume)
+#   GEIGER_VOLUME            playback loudness, 1.0 = full, 0.15 = 15%
+#                            (default 1.0)
+#   GEIGER_CONFIG_DIR        dir holding live config files: "enabled" (mute
+#                            toggle) and "volume" (default ~/.config/claude-geiger)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 GEIGER_ENABLED="${GEIGER_ENABLED:-1}"
+GEIGER_VOLUME="${GEIGER_VOLUME:-1.0}"
+GEIGER_CONFIG_DIR="${GEIGER_CONFIG_DIR:-$HOME/.config/claude-geiger}"
+
+# Config files in GEIGER_CONFIG_DIR override the env defaults, and are re-read
+# every poll so changes take effect live (no Claude Code restart). This is also
+# how settings persist: a statusLine can't inject env vars, so put config here.
+#   enabled  -> "1"/"0", written by the menu bar app (mute toggle)
+#   volume   -> playback loudness, e.g. "0.15"
+if [ -f "$GEIGER_CONFIG_DIR/enabled" ]; then
+  GEIGER_ENABLED="$(cat "$GEIGER_CONFIG_DIR/enabled" 2>/dev/null)"
+  GEIGER_ENABLED="${GEIGER_ENABLED:-1}"
+fi
+if [ -f "$GEIGER_CONFIG_DIR/volume" ]; then
+  GEIGER_VOLUME="$(cat "$GEIGER_CONFIG_DIR/volume" 2>/dev/null)"
+  GEIGER_VOLUME="${GEIGER_VOLUME:-1.0}"
+fi
+export GEIGER_VOLUME   # play-clicks.sh (launched below) reads it from the env
 GEIGER_SOUND="${GEIGER_SOUND:-$SCRIPT_DIR/click.wav}"
 GEIGER_TOKENS_PER_CLICK="${GEIGER_TOKENS_PER_CLICK:-40}"
 GEIGER_MAX_CLICKS="${GEIGER_MAX_CLICKS:-15}"

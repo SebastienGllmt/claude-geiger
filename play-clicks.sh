@@ -8,10 +8,12 @@
 #
 # Audio player is auto-detected so this works on macOS and Linux alike.
 # Override with GEIGER_PLAYER (just the command name, e.g. "paplay").
+# GEIGER_VOLUME scales playback loudness: 1.0 = full, 0.15 = 15%, etc.
 
 count="${1:-1}"
 window="${2:-0.9}"
 sound="${3:?sound file required}"
+volume="${GEIGER_VOLUME:-1.0}"
 
 [ "$count" -lt 1 ] && count=1
 
@@ -26,14 +28,18 @@ if [ -z "$player" ]; then
 fi
 [ -z "$player" ] && exit 0   # nothing to play with; stay silent
 
-# Play one sound, backgrounded and quiet. Each player wants different flags.
+# Play one sound, backgrounded and quiet. Each player takes volume differently:
+# afplay/sox want a 0..1 gain, ffplay a 0..100 int, paplay a 0..65536 int.
+# aplay has no per-play volume, so it ignores GEIGER_VOLUME (use the mixer).
+pa_vol="$(awk -v v="$volume" 'BEGIN { printf "%d", v * 65536 }')"
+ff_vol="$(awk -v v="$volume" 'BEGIN { printf "%d", v * 100 }')"
 play_one() {
   case "$player" in
-    afplay) afplay "$sound" ;;
-    paplay) paplay "$sound" ;;
+    afplay) afplay -v "$volume" "$sound" ;;
+    paplay) paplay --volume="$pa_vol" "$sound" ;;
     aplay)  aplay -q "$sound" ;;
-    ffplay) ffplay -nodisp -autoexit -loglevel quiet "$sound" ;;
-    play)   play -q "$sound" ;;
+    ffplay) ffplay -nodisp -autoexit -loglevel quiet -volume "$ff_vol" "$sound" ;;
+    play)   play -q -v "$volume" "$sound" ;;
     *)      "$player" "$sound" ;;
   esac >/dev/null 2>&1
 }
