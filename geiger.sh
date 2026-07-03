@@ -10,7 +10,9 @@
 #
 # Config via env (set them in settings.json's statusLine.env or your shell):
 #   GEIGER_ENABLED           1 to click, 0 to stay silent (default 1)
-#   GEIGER_SOUND             path to a sound file (default ./click.wav)
+#   GEIGER_SOUND             pin ONE sound file for every model, overriding the
+#                            per-model map (sounds.json). Unset = per-model pick,
+#                            falling back to ./sound/catalogue/classic.wav
 #   GEIGER_TOKENS_PER_CLICK  tokens per tick (default 40)
 #   GEIGER_MAX_CLICKS        cap per poll, so a big context load doesn't
 #                            machine-gun (default 15)
@@ -46,14 +48,16 @@ if [ -f "$GEIGER_CONFIG_DIR/volume" ]; then
   GEIGER_VOLUME="${GEIGER_VOLUME:-1.0}"
 fi
 export GEIGER_VOLUME   # play-clicks.sh (launched below) reads it from the env
-GEIGER_SOUND="${GEIGER_SOUND:-$SCRIPT_DIR/click.wav}"
+# If the user pinned a specific sound, per-model auto-pick (below) defers to it.
+GEIGER_SOUND_EXPLICIT=0; [ -n "${GEIGER_SOUND:-}" ] && GEIGER_SOUND_EXPLICIT=1
+GEIGER_SOUND="${GEIGER_SOUND:-$SCRIPT_DIR/sound/catalogue/classic.wav}"
 GEIGER_TOKENS_PER_CLICK="${GEIGER_TOKENS_PER_CLICK:-40}"
 GEIGER_MAX_CLICKS="${GEIGER_MAX_CLICKS:-15}"
 GEIGER_WINDOW="${GEIGER_WINDOW:-0.9}"
 GEIGER_COUNT="${GEIGER_COUNT:-total}"
 GEIGER_STATE_DIR="${GEIGER_STATE_DIR:-${TMPDIR:-/tmp}/claude-geiger}"
 
-# Fall back to a macOS system sound if click.wav is missing — but only on
+# Fall back to a macOS system sound if the sound file is missing — but only on
 # macOS, since that .aiff isn't playable by Linux players like paplay/aplay.
 if [ ! -f "$GEIGER_SOUND" ] && [ -f "/System/Library/Sounds/Pop.aiff" ]; then
   GEIGER_SOUND="/System/Library/Sounds/Pop.aiff"
@@ -63,12 +67,13 @@ input="$(cat)"
 
 # Parse with jq when available; fall back to grep for zero-dependency use.
 if command -v jq >/dev/null 2>&1; then
-  read -r in_tok out_tok pct session < <(
+  read -r in_tok out_tok pct session model_id < <(
     printf '%s' "$input" | jq -r '
       [ (.context_window.total_input_tokens  // 0),
         (.context_window.total_output_tokens // 0),
         (.context_window.used_percentage     // 0),
-        (.session_id // "default") ] | @tsv' 2>/dev/null | tr '\t' ' '
+        (.session_id // "default"),
+        (.model.id   // "") ] | @tsv' 2>/dev/null | tr '\t' ' '
   )
 else
   num() { printf '%s' "$input" | grep -o "\"$1\"[[:space:]]*:[[:space:]]*[0-9]*" | head -n1 | grep -o '[0-9]*$'; }
@@ -76,9 +81,27 @@ else
   out_tok="$(num total_output_tokens)"
   pct="$(num used_percentage)"
   session="$(printf '%s' "$input" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | sed 's/.*"\([^"]*\)"$/\1/')"
+  model_id=""   # per-model sound needs jq; without it, fall back to the default
 fi
 
-in_tok="${in_tok:-0}"; out_tok="${out_tok:-0}"; pct="${pct:-0}"; session="${session:-default}"
+in_tok="${in_tok:-0}"; out_tok="${out_tok:-0}"; pct="${pct:-0}"; session="${session:-default}"; model_id="${model_id:-}"
+
+# Per-model sound: map a substring of model.id to a catalog sound via sounds.json
+# (repo default, overridable at $GEIGER_CONFIG_DIR/sounds.json), re-read every
+# poll so edits take effect live. Skipped when the user pinned GEIGER_SOUND.
+# Unknown model / missing file keeps whatever GEIGER_SOUND already is.
+if [ "$GEIGER_SOUND_EXPLICIT" = 0 ] && [ -n "$model_id" ] && command -v jq >/dev/null 2>&1; then
+  sounds_json="$SCRIPT_DIR/sound/sounds.json"
+  [ -f "$GEIGER_CONFIG_DIR/sounds.json" ] && sounds_json="$GEIGER_CONFIG_DIR/sounds.json"
+  if [ -f "$sounds_json" ]; then
+    sound_name="$(jq -r --arg m "$model_id" '
+      first(to_entries[] | select(.key != "_comment" and (.key as $k | $m | contains($k))) | .value)
+      // .default // empty' "$sounds_json" 2>/dev/null)"
+    picked="$SCRIPT_DIR/sound/catalogue/$sound_name.wav"
+    [ -n "$sound_name" ] && [ -f "$picked" ] && GEIGER_SOUND="$picked"
+  fi
+fi
+[ "${GEIGER_DEBUG:-0}" = 1 ] && printf 'geiger: model=%q sound=%q\n' "$model_id" "$GEIGER_SOUND" >&2
 
 if [ "$GEIGER_COUNT" = "output" ]; then
   total=$(( out_tok ))
@@ -102,7 +125,7 @@ if [ "$GEIGER_ENABLED" = "1" ] && [ "$delta" -gt 0 ] && [ -f "$GEIGER_SOUND" ]; 
   (( clicks < 1 )) && clicks=1
   (( clicks > GEIGER_MAX_CLICKS )) && clicks=$GEIGER_MAX_CLICKS
   # Fire-and-forget: never block the statusline render.
-  nohup bash "$SCRIPT_DIR/play-clicks.sh" "$clicks" "$GEIGER_WINDOW" "$GEIGER_SOUND" >/dev/null 2>&1 &
+  nohup bash "$SCRIPT_DIR/sound/play-clicks.sh" "$clicks" "$GEIGER_WINDOW" "$GEIGER_SOUND" >/dev/null 2>&1 &
   disown 2>/dev/null
 fi
 

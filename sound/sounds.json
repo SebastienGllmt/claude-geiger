@@ -1,0 +1,8 @@
+{
+  "_comment": "Maps a substring of the model id to a baked-in sound name (see SOUNDS in make-click.py: classic, boop, buzz, bright). First matching key wins; 'default' is the fallback for unknown models. Copy this to ~/.config/claude-geiger/sounds.json to customize.",
+  "opus": "classic",
+  "sonnet": "buzz",
+  "haiku": "bright",
+  "fable": "boop",
+  "default": "classic"
+}

@@ -28,7 +28,7 @@ calls, no extra tokens.
 ```bash
 git clone https://github.com/sebastiengllmt/claude-geiger.git
 cd claude-geiger
-./install.sh          # generates click.wav, wires up ~/.claude/settings.json
+./install.sh          # generates the click sounds, wires up ~/.claude/settings.json
 ```
 
 Then start a new Claude Code session.
@@ -75,10 +75,10 @@ bar app and you get a ☢ in the top-right of your screen — click it to mute o
 unmute on the fly:
 
 ```bash
-./menubar.sh           # builds (needs swiftc) and launches the menu bar app
-./menubar.sh --login   # ...and start it automatically at login
-./menubar.sh --stop    # quit it
-./menubar.sh --logout  # remove the login item
+./ui/menubar.sh           # builds (needs swiftc) and launches the menu bar app
+./ui/menubar.sh --login   # ...and start it automatically at login
+./ui/menubar.sh --stop    # quit it
+./ui/menubar.sh --logout  # remove the login item
 ```
 
 The toggle is **live**: clicking it writes `~/.config/claude-geiger/enabled`
@@ -96,7 +96,7 @@ installed.
 
 ### The icon doesn't appear?
 
-If `menubar.sh` reports the app is running but no icon shows up — and it isn't
+If `ui/menubar.sh` reports the app is running but no icon shows up — and it isn't
 hidden behind the notch or a menu bar manager — macOS's menu bar agent has
 likely gotten into a state where it stops surfacing *newly launched* apps'
 items (existing ones keep working). This affects any menu bar app, not just
@@ -106,7 +106,7 @@ this one. Reset it:
 killall SystemUIServer; killall ControlCenter   # both relaunch automatically
 ```
 
-Then relaunch with `./menubar.sh`. If it still doesn't show, logging out and
+Then relaunch with `./ui/menubar.sh`. If it still doesn't show, logging out and
 back in (or a reboot) clears it for good.
 
 ## System-tray toggle (Windows / WSL2)
@@ -117,10 +117,10 @@ into — the equivalent lives in the **Windows system tray**. Build it from
 inside WSL:
 
 ```bash
-./traybar.sh           # installs to %LOCALAPPDATA% and launches the tray app
-./traybar.sh --login   # ...and start it at Windows login (a .vbs in Startup)
-./traybar.sh --stop     # quit it
-./traybar.sh --logout   # remove the Startup entry
+./ui/traybar.sh           # installs to %LOCALAPPDATA% and launches the tray app
+./ui/traybar.sh --login   # ...and start it at Windows login (a .vbs in Startup)
+./ui/traybar.sh --stop     # quit it
+./ui/traybar.sh --logout   # remove the Startup entry
 ```
 
 A ☢ radiation icon appears by the clock (you may need the `^` to reveal hidden
@@ -130,8 +130,8 @@ exact same live mechanism as macOS: clicking writes `1`/`0` to
 share — and `geiger.sh` re-reads it every poll, so muting is instant with no
 restart. The icon is gold when clicking, dim grey when muted.
 
-It's a small PowerShell app (`geigerbar.ps1`, using the built-in WinForms
-`NotifyIcon` — nothing to install) that `traybar.sh` copies to
+It's a small PowerShell app (`ui/geigerbar.ps1`, using the built-in WinForms
+`NotifyIcon` — nothing to install) that `ui/traybar.sh` copies to
 `%LOCALAPPDATA%\claude-geiger` and launches hidden via a `.vbs` (running a
 `.ps1` straight off the WSL share trips Windows' network-zone guard; an
 NTFS-local copy doesn't, and the `.vbs` avoids a console-window flash). To
@@ -147,7 +147,7 @@ file when WSL is already running, defaulting to *on* otherwise.
 | `GEIGER_MAX_CLICKS` | `15` | Cap per poll (stops huge context loads machine-gunning) |
 | `GEIGER_WINDOW` | `0.9` | Seconds to spread a burst over |
 | `GEIGER_COUNT` | `total` | `total` (input+output) or `output` only |
-| `GEIGER_SOUND` | `./click.wav` | Any file your player can play |
+| `GEIGER_SOUND` | _(per-model)_ | Pin one file for **all** models, overriding `sounds.json`; unset = per-model pick (fallback `./sound/catalogue/classic.wav`). See [Per-model sounds](#per-model-sounds) |
 | `GEIGER_VOLUME` | `1.0` | Playback loudness; `0.15` = 15%, for quiet background ticks |
 | `GEIGER_PLAYER` | auto | Player command; auto-detected if unset. On WSL2, audio defaults to the Windows stack (`GEIGER_VOLUME` honored) — set `windows` to force it, or a Linux player name (e.g. `paplay`) to bypass it |
 | `GEIGER_STATE_DIR` | `$TMPDIR/claude-geiger` | Per-session last-count storage |
@@ -167,6 +167,38 @@ echo 0    > ~/.config/claude-geiger/enabled   # mute (same as the menu bar toggl
 (The env vars above still work if you export them in a shell that launches
 Claude Code; the config files are the reliable way to persist them.)
 
+## Per-model sounds
+
+The tick changes with the Claude model in use, so you can *hear* which tier is
+running. `geiger.sh` reads `model.id` from the same statusLine JSON and looks it
+up in `sounds.json`, mapping a substring of the id to a sound in the
+`sound/catalogue/` folder:
+
+| Sound | Character | Default model |
+|---|---|---|
+| `classic` | the original tick (sine) | Opus, and the fallback |
+| `buzz` | buzzy square | Sonnet |
+| `bright` | bright saw | Haiku |
+| `boop` | soft, low sine | Fable |
+
+`sounds.json` maps model → sound name; `default` catches anything unmatched:
+
+```json
+{ "opus": "classic", "sonnet": "buzz", "haiku": "bright", "fable": "boop", "default": "classic" }
+```
+
+- **Customize the mapping:** drop a copy in `GEIGER_CONFIG_DIR`
+  (`~/.config/claude-geiger/sounds.json`) — it's re-read every poll, so edits
+  apply live. Point any model at any catalog sound, or share one across models.
+- **Add or retune a sound:** edit the `SOUNDS` presets in `make-click.py`
+  (`shape`/`freq`/`noise`/`decay`), re-run `python3 sound/make-click.py`, then
+  reference the new name in `sounds.json`.
+- **Pin one sound for everything:** set `GEIGER_SOUND` explicitly — it wins,
+  and per-model auto-pick is skipped.
+- Needs `jq`; without it, or for an unknown model, it falls back to
+  `sound/catalogue/classic.wav`. `GEIGER_DEBUG=1` prints the detected model and
+  chosen sound to stderr.
+
 ## Limitations
 
 - Resolution is ~1s and counts land *after* a message renders, so a long
@@ -185,11 +217,15 @@ Claude Code; the config files are the reliable way to persist them.)
 ## Files
 
 - `geiger.sh` — the statusLine command (parse JSON, compute delta, fire clicks)
-- `play-clicks.sh` — plays N jittered clicks over a window, backgrounded
-- `make-click.py` — synthesizes `click.wav`
+- `sound/` — the sound subsystem:
+  - `sound/play-clicks.sh` — plays N jittered clicks over a window, backgrounded
+  - `sound/make-click.py` — synthesizes the `catalogue/` sounds (per-model ticks)
+  - `sound/catalogue/` — the built-in tick catalog (`classic`/`buzz`/`bright`/`boop`)
+  - `sound/sounds.json` — model → sound mapping (copy to `GEIGER_CONFIG_DIR` to customize)
 - `install.sh` — merges the statusLine config into your settings
 - `uninstall.sh` — removes the statusLine config again
-- `geigerbar.swift` — macOS menu bar toggle (☢ icon, mute/unmute live)
-- `menubar.sh` — build/launch/stop the menu bar app, optional login item
-- `geigerbar.ps1` — Windows/WSL2 system-tray toggle (☢ icon, mute/unmute live)
-- `traybar.sh` — install/launch/stop the tray app from WSL, optional Startup entry
+- `ui/` — optional mute toggles (independent of the statusLine):
+  - `ui/geigerbar.swift` — macOS menu bar toggle (☢ icon, mute/unmute live)
+  - `ui/menubar.sh` — build/launch/stop the menu bar app, optional login item
+  - `ui/geigerbar.ps1` — Windows/WSL2 system-tray toggle (☢ icon, mute/unmute live)
+  - `ui/traybar.sh` — install/launch/stop the tray app from WSL, optional Startup entry

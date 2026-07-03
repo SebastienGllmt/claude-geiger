@@ -16,11 +16,11 @@ GEIGER="$SCRIPT_DIR/geiger.sh"
 FORCE="${GEIGER_FORCE:-0}"
 case "${1:-}" in -y|--force|--yes) FORCE=1 ;; esac
 
-chmod +x "$SCRIPT_DIR/geiger.sh" "$SCRIPT_DIR/play-clicks.sh" 2>/dev/null || true
+chmod +x "$SCRIPT_DIR/geiger.sh" "$SCRIPT_DIR/sound/play-clicks.sh" 2>/dev/null || true
 
-# Generate the click sound if it's not there yet and python3 is available.
-if [ ! -f "$SCRIPT_DIR/click.wav" ] && command -v python3 >/dev/null 2>&1; then
-  python3 "$SCRIPT_DIR/make-click.py" || true
+# Generate the click sounds if they're not there yet and python3 is available.
+if [ ! -f "$SCRIPT_DIR/sound/catalogue/classic.wav" ] && command -v python3 >/dev/null 2>&1; then
+  python3 "$SCRIPT_DIR/sound/make-click.py" || true
 fi
 
 mkdir -p "$(dirname "$SETTINGS")"

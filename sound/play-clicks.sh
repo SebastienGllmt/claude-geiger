@@ -90,9 +90,14 @@ play_via_windows() {
     \$ic = [Globalization.CultureInfo]::InvariantCulture
     try {
       \$src = '$src_win'
-      \$dst = Join-Path \$env:TEMP 'claude-geiger-click.wav'
+      # Per-sound temp file: all catalog ticks are the same byte length, so a
+      # single shared name + size-only cache check would keep replaying the first
+      # sound copied. Name the cache after the source and also refresh it when
+      # the source is newer (so retuning a sound in place isn't stale either).
+      \$dst = Join-Path \$env:TEMP ('claude-geiger-' + (Split-Path -Leaf \$src))
       if (-not (Test-Path -LiteralPath \$dst) -or
-          (Get-Item -LiteralPath \$dst).Length -ne (Get-Item -LiteralPath \$src).Length) {
+          (Get-Item -LiteralPath \$dst).Length -ne (Get-Item -LiteralPath \$src).Length -or
+          (Get-Item -LiteralPath \$dst).LastWriteTime -lt (Get-Item -LiteralPath \$src).LastWriteTime) {
         Copy-Item -LiteralPath \$src -Destination \$dst -Force
       }
       Add-Type -AssemblyName PresentationCore
