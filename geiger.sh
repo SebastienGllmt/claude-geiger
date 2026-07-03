@@ -67,13 +67,15 @@ input="$(cat)"
 
 # Parse with jq when available; fall back to grep for zero-dependency use.
 if command -v jq >/dev/null 2>&1; then
-  read -r in_tok out_tok pct session model_id < <(
+  # model_name is last: it can contain spaces, and read's final field keeps them.
+  read -r in_tok out_tok pct session model_id model_name < <(
     printf '%s' "$input" | jq -r '
       [ (.context_window.total_input_tokens  // 0),
         (.context_window.total_output_tokens // 0),
         (.context_window.used_percentage     // 0),
-        (.session_id // "default"),
-        (.model.id   // "") ] | @tsv' 2>/dev/null | tr '\t' ' '
+        (.session_id         // "default"),
+        (.model.id           // ""),
+        (.model.display_name // "") ] | @tsv' 2>/dev/null | tr '\t' ' '
   )
 else
   num() { printf '%s' "$input" | grep -o "\"$1\"[[:space:]]*:[[:space:]]*[0-9]*" | head -n1 | grep -o '[0-9]*$'; }
@@ -81,10 +83,10 @@ else
   out_tok="$(num total_output_tokens)"
   pct="$(num used_percentage)"
   session="$(printf '%s' "$input" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | sed 's/.*"\([^"]*\)"$/\1/')"
-  model_id=""   # per-model sound needs jq; without it, fall back to the default
+  model_id=""; model_name=""   # per-model sound/name need jq; without it, omit
 fi
 
-in_tok="${in_tok:-0}"; out_tok="${out_tok:-0}"; pct="${pct:-0}"; session="${session:-default}"; model_id="${model_id:-}"
+in_tok="${in_tok:-0}"; out_tok="${out_tok:-0}"; pct="${pct:-0}"; session="${session:-default}"; model_id="${model_id:-}"; model_name="${model_name:-}"
 
 # Per-model sound: map a substring of model.id to a catalog sound via sounds.json
 # (repo default, overridable at $GEIGER_CONFIG_DIR/sounds.json), re-read every
@@ -130,5 +132,7 @@ if [ "$GEIGER_ENABLED" = "1" ] && [ "$delta" -gt 0 ] && [ -f "$GEIGER_SOUND" ]; 
 fi
 
 # Statusline text. printf with thousands separators where the locale allows.
-printf "\xE2\x98\xA2 %'d tok  %s%% ctx" "$total" "$pct" 2>/dev/null \
-  || printf "\xE2\x98\xA2 %d tok  %s%% ctx" "$total" "$pct"
+# Trailing model name, space-prefixed only when present (empty on the jq-less path).
+suffix=""; [ -n "$model_name" ] && suffix="  $model_name"
+printf "\xE2\x98\xA2 %'d tok  %s%% ctx%s" "$total" "$pct" "$suffix" 2>/dev/null \
+  || printf "\xE2\x98\xA2 %d tok  %s%% ctx%s" "$total" "$pct" "$suffix"
