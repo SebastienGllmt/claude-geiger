@@ -203,6 +203,14 @@ up in `sounds.json`, mapping a substring of the id to a sound in the
 
 - Resolution is ~1s and counts land *after* a message renders, so a long
   generation ticks in chunks rather than smoothly.
+- **Foreground only — no clicks for background sub-agents.** Geiger is a
+  statusLine command, and Claude Code only pipes it the *main* session's token
+  counts; sub-agents spawned by the Task tool run in their own context, so their
+  usage never reaches this script. Claude Code exposes no per-token stream for
+  them either — only discrete `SubagentStart`/`SubagentStop` hook events — so the
+  most anything could do is one sound on start and one on stop. If you want that
+  start/stop signal, use [peon-ping](https://github.com/PeonPing/peon-ping),
+  which is built on exactly those hooks.
 - Needs a command-line audio player. `play-clicks.sh` auto-detects `afplay`
   (macOS) or `paplay`/`aplay`/`ffplay`/`play` (Linux); install one (e.g.
   `pulseaudio-utils` for `paplay`, `alsa-utils` for `aplay`) or set
