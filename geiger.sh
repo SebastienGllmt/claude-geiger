@@ -67,15 +67,20 @@ input="$(cat)"
 
 # Parse with jq when available; fall back to grep for zero-dependency use.
 if command -v jq >/dev/null 2>&1; then
-  # model_name is last: it can contain spaces, and read's final field keeps them.
-  read -r in_tok out_tok pct session model_id model_name < <(
+  # One field per line, one read per field: a missing field is an EMPTY line,
+  # which read preserves. Splitting one delimited line instead (@tsv + read)
+  # collapses empty fields and shifts everything after them — a payload with no
+  # .prompt_id would silently make the state key the model id.
+  { read -r in_tok; read -r out_tok; read -r pct; read -r session
+    read -r prompt_id; read -r model_id; read -r model_name; } < <(
     printf '%s' "$input" | jq -r '
-      [ (.context_window.total_input_tokens  // 0),
-        (.context_window.total_output_tokens // 0),
-        (.context_window.used_percentage     // 0),
-        (.session_id         // "default"),
-        (.model.id           // ""),
-        (.model.display_name // "") ] | @tsv' 2>/dev/null | tr '\t' ' '
+      (.context_window.total_input_tokens  // 0),
+      (.context_window.total_output_tokens // 0),
+      (.context_window.used_percentage     // 0),
+      (.session_id         // "default"),
+      (.prompt_id          // ""),
+      (.model.id           // ""),
+      (.model.display_name // "")' 2>/dev/null
   )
 else
   num() { printf '%s' "$input" | grep -o "\"$1\"[[:space:]]*:[[:space:]]*[0-9]*" | head -n1 | grep -o '[0-9]*$'; }
@@ -83,10 +88,10 @@ else
   out_tok="$(num total_output_tokens)"
   pct="$(num used_percentage)"
   session="$(printf '%s' "$input" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | sed 's/.*"\([^"]*\)"$/\1/')"
-  model_id=""; model_name=""   # per-model sound/name need jq; without it, omit
+  prompt_id=""; model_id=""; model_name=""   # per-model sound/name/prompt_id need jq; without it, omit
 fi
 
-in_tok="${in_tok:-0}"; out_tok="${out_tok:-0}"; pct="${pct:-0}"; session="${session:-default}"; model_id="${model_id:-}"; model_name="${model_name:-}"
+in_tok="${in_tok:-0}"; out_tok="${out_tok:-0}"; pct="${pct:-0}"; session="${session:-default}"; prompt_id="${prompt_id:-}"; model_id="${model_id:-}"; model_name="${model_name:-}"
 
 # Per-model sound: map a substring of model.id to a catalog sound via sounds.json
 # (repo default, overridable at $GEIGER_CONFIG_DIR/sounds.json), re-read every
@@ -111,16 +116,46 @@ else
   total=$(( in_tok + out_tok ))
 fi
 
-# Track the previous count per session so concurrent sessions don't collide.
+# Track the previous count so we can diff it against `total` for the delta.
+#
+# Keyed by prompt_id, not session_id, so parallel windows of ONE resumed session
+# don't collide. Claude Code gives two live windows on the same session the same
+# session_id AND the same transcript_path; the only field that differs is
+# prompt_id. But prompt_id rotates every prompt, and the token total carries
+# across that rotation continuously — so no field is both per-window-stable and
+# per-window-distinct. We therefore keep a small TABLE of "prompt_id<TAB>total"
+# lines (most-recent last, capped) instead of one number: each active window
+# diffs against its own last total, so parallel forks tick independently, and a
+# prompt rotation just means an unseen id -> prev=0 -> one silent poll (handled
+# below). Empty prompt_id (jq-less path) falls back to a single shared baseline.
+# ponytail: last-writer-wins on the file; two windows writing at once can drop a
+# line, costing that window one silent poll. Self-heals next poll — no lock.
 mkdir -p "$GEIGER_STATE_DIR" 2>/dev/null
 state_file="$GEIGER_STATE_DIR/${session}.last"
+key="${prompt_id:-_}"
 prev=0
-[ -f "$state_file" ] && prev="$(cat "$state_file" 2>/dev/null)"
+[ -f "$state_file" ] && prev="$(awk -F'\t' -v k="$key" '$1==k{v=$2} END{print v+0}' "$state_file" 2>/dev/null)"
 prev="${prev:-0}"
-printf '%s' "$total" > "$state_file"
+# total==0 means the payload carried no .context_window (jq's // 0 turns the
+# absent field into a hard zero) — "no data", not "zero tokens consumed". A
+# window that resumed but hasn't been used yet reports this. Recording it as the
+# baseline makes the NEXT real poll look like a full-context jump and fire a
+# capped burst, so only record real totals. Drop our old line, append the fresh
+# one, keep the last 10 windows so the table can't grow without bound.
+if (( total > 0 )); then
+  tmp="$state_file.$$"
+  { [ -f "$state_file" ] && awk -F'\t' -v k="$key" '$1!=k' "$state_file" 2>/dev/null
+    printf '%s\t%s\n' "$key" "$total"; } | tail -n 10 > "$tmp" 2>/dev/null \
+    && mv "$tmp" "$state_file" 2>/dev/null
+fi
 
 delta=$(( total - prev ))
 (( delta < 0 )) && delta=0   # new session or post-/compact reset
+# prev==0 means we have no baseline (first poll, or the state file was wiped /
+# unwritable). delta would then be the whole context — a capped burst. If the
+# baseline never sticks, that burst repeats every poll, forever, with nothing
+# running. Stay silent and just record the baseline instead.
+(( prev == 0 )) && delta=0
 
 if [ "$GEIGER_ENABLED" = "1" ] && [ "$delta" -gt 0 ] && [ -f "$GEIGER_SOUND" ]; then
   clicks=$(( delta / GEIGER_TOKENS_PER_CLICK ))
@@ -129,6 +164,12 @@ if [ "$GEIGER_ENABLED" = "1" ] && [ "$delta" -gt 0 ] && [ -f "$GEIGER_SOUND" ]; 
   # Fire-and-forget: never block the statusline render.
   nohup bash "$SCRIPT_DIR/sound/play-clicks.sh" "$clicks" "$GEIGER_WINDOW" "$GEIGER_SOUND" >/dev/null 2>&1 &
   disown 2>/dev/null
+  # GEIGER_DEBUG=1 logs every burst to a file. A statusline's stderr is swallowed
+  # by Claude Code, so a file is the only way to see why it clicked. Answers the
+  # "it ticked forever with nothing running" question: which session, and whether
+  # prev/total desynced.
+  [ "${GEIGER_DEBUG:-0}" = 1 ] && printf '%s session=%s prev=%s total=%s delta=%s clicks=%s\n' \
+    "$(date +%T)" "$session" "$prev" "$total" "$delta" "$clicks" >> "$GEIGER_STATE_DIR/debug.log"
 fi
 
 # Statusline text. printf with thousands separators where the locale allows.
